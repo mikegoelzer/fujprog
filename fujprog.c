@@ -548,6 +548,7 @@ static int spi_addr;		/* Base address for -j flash programming */
 static int global_debug;
 static int force_prog;		/* force programming even if chip ids do not match*/
 static int opt_info=0;		/* display info */
+static int opt_status=0;		/* display READ_STATUS bits */
 
 static struct cable_hw_map *hmp; /* Selected cable hardware map */
 #ifdef WIN32
@@ -629,7 +630,7 @@ set_port_mode(int mode)
 	commit(1);
 
 	/* Run only if not in identify mode */
-	if (!opt_info) {
+	if (!opt_info && !opt_status) {
 	/* Blink status LED by deactivating CBUS pulldown pin */
 	if (need_led_blink) {
 		need_led_blink = 0;
@@ -966,12 +967,16 @@ setup_usb(void)
 		fprintf(stderr, "ftdi_set_baudrate() failed\n");
 		return (res);
 	}
+	if (global_debug)
+		fprintf(stderr, "DEBUG: ftdi_set_baudrate() set to %d\n", USB_BAUDS);
 
 	res = ftdi_write_data_set_chunksize(&fc, BUFLEN_MAX);
 	if (res < 0) {
 		fprintf(stderr, "ftdi_write_data_set_chunksize() failed\n");
 		return (res);
 	}
+	if (global_debug)
+		fprintf(stderr, "DEBUG: ftdi_write_data_set_chunksize() set to %d\n", BUFLEN_MAX);
 
 	/* Reducing latency to 1 ms for BITMODE_SYNCBB is crucial! */
 	res = ftdi_set_latency_timer(&fc, 1);
@@ -979,12 +984,17 @@ setup_usb(void)
 		fprintf(stderr, "ftdi_set_latency_timer() failed\n");
 		return (res);
 	}
+	if (global_debug)
+		fprintf(stderr, "DEBUG: ftdi_set_latency_timer() set to %d\n", 1);
 
 	res = ftdi_set_bitmode(&fc, USB_TCK | USB_TMS | USB_TDI,
 	    BITMODE_BITBANG);
 	if (res < 0) {
 		fprintf(stderr, "ftdi_set_bitmode() failed\n");
 		return (EXIT_FAILURE);
+	}
+	if (global_debug) {
+		fprintf(stderr, "DEBUG: ftdi_set_bitmode() set to 0x%02x\n", USB_TCK | USB_TMS | USB_TDI);
 	}
 	if (global_debug)
 		fprintf(stderr, "Returning from setup_usb()\n");
@@ -1643,7 +1653,7 @@ exec_svf_tokenized(int tokc, char *tokv[])
 		}
 		if (res)
 			break;
-		if ((tokc == 6 || tokc ==8 ) && opt_info) {
+		if ((tokc == 6 || tokc ==8 ) && (opt_info || opt_status)) {
 			if (strlen(tokv[3]) == 8 && strlen(tokv[5]) == 8 &&
 				strcmp(tokv[7], "FFFFFFFF") == 0)
 			{
@@ -2548,6 +2558,150 @@ exec_info(char *path, int jed_target, int debug)
 	return(0);
 }
 
+// Print a table of device status bits from a hex string
+static void 
+print_device_status_bits(const char *status_hex) {
+    unsigned int status;
+    sscanf(status_hex, "%x", &status);
+
+    printf("\n");
+    printf("    %-25s %-15s %s\n", "Function", "Value", "Meaning");
+    printf("    ---------------------------------------------------------------------------------\n");
+
+    // Check each bit and print its meaning
+    printf("    %-25s %-15s %s\n", "Transparent Mode", 
+           (status & (1u << 0)) ? "1" : "0",
+           (status & (1u << 0)) ? "Yes - Device is in Transparent mode" : "No");
+
+    // Config Target Selection [3:1]
+    int config_target = (status >> 1) & 0x7;
+    printf("    %-25s %-15s %s\n", "Config Target Selection",
+           config_target == 0 ? "000" : "???",
+           config_target == 0 ? "SRAM array" : "Unknown");
+
+    printf("    %-25s %-15s %s\n", "JTAG Active",
+           (status & (1u << 4)) ? "1" : "0",
+           (status & (1u << 4)) ? "Yes - JTAG State Machine is active" : "No");
+
+    printf("    %-25s %-15s %s\n", "PWD Protection",
+           (status & (1u << 5)) ? "1" : "0",
+           (status & (1u << 5)) ? "Yes - Password protected" : "No");
+
+    printf("    %-25s %-15s %s\n", "Decrypt Enable",
+           (status & (1u << 7)) ? "1" : "0",
+           (status & (1u << 7)) ? "Yes - Encrypted bitstreams accepted" : "No");
+
+    printf("    %-25s %-15s %s\n", "DONE",
+           (status & (1u << 8)) ? "1" : "0",
+           (status & (1u << 8)) ? "Yes - Done bit set" : "No");
+
+    printf("    %-25s %-15s %s\n", "ISC Enable",
+           (status & (1u << 9)) ? "1" : "0",
+           (status & (1u << 9)) ? "Yes - JTAG instructions executing with ISC" : "No");
+
+    printf("    %-25s %-15s %s\n", "Write Enable",
+           (status & (1u << 10)) ? "1" : "0",
+           (status & (1u << 10)) ? "Writable" : "Not Writable");
+
+    printf("    %-25s %-15s %s\n", "Read Enable",
+           (status & (1u << 11)) ? "1" : "0",
+           (status & (1u << 11)) ? "Readable" : "Not Readable");
+
+    printf("    %-25s %-15s %s\n", "Busy Flag",
+           (status & (1u << 12)) ? "1" : "0",
+           (status & (1u << 12)) ? "Yes - Configuration logic is busy" : "No");
+
+    printf("    %-25s %-15s %s\n", "Fail Flag",
+           (status & (1u << 13)) ? "1" : "0",
+           (status & (1u << 13)) ? "Yes - Last instruction/command failed" : "No");
+
+    printf("    %-25s %-15s %s\n", "Decrypt Only",
+           (status & (1u << 15)) ? "1" : "0",
+           (status & (1u << 15)) ? "Yes - Only encrypted data accepted" : "No");
+
+    printf("    %-25s %-15s %s\n", "PWD Enable",
+           (status & (1u << 16)) ? "1" : "0",
+           (status & (1u << 16)) ? "Yes - Password protection enabled" : "No");
+
+    printf("    %-25s %-15s %s\n", "Encrypt Preamble",
+           (status & (1u << 20)) ? "1" : "0",
+           (status & (1u << 20)) ? "Yes - Encrypted Preamble detected" : "No");
+
+    printf("    %-25s %-15s %s\n", "Std Preamble",
+           (status & (1u << 21)) ? "1" : "0",
+           (status & (1u << 21)) ? "Yes - Standard Preamble detected" : "No");
+
+    printf("    %-25s %-15s %s\n", "SPIm Fail 1",
+           (status & (1u << 22)) ? "1" : "0",
+           (status & (1u << 22)) ? "Yes - Failed primary pattern config" : "No");
+
+    // BSE Error Code [25:23]
+    int bse_error = (status >> 23) & 0x7;
+    const char *bse_meanings[] = {
+        "No error",
+        "ID error",
+        "CMD error - illegal command",
+        "CRC error",
+        "PRMB error - preamble error",
+        "ABRT error - config aborted by user",
+        "OVFL error - data overflow error",
+        "SDM error - bitstream exceeds SRAM array"
+    };
+    printf("    %-25s %-15s %s\n", "BSE Error Code",
+           bse_error < 8 ? bse_meanings[bse_error] : "Unknown",
+           "");
+
+    printf("    %-25s %-15s %s\n", "Execution Error",
+           (status & (1u << 26)) ? "1" : "0",
+           (status & (1u << 26)) ? "Yes - Error during execution" : "No");
+
+    printf("    %-25s %-15s %s\n", "ID Error",
+           (status & (1u << 27)) ? "1" : "0",
+           (status & (1u << 27)) ? "Yes - ID mismatch with Verify_ID" : "No");
+
+    printf("    %-25s %-15s %s\n", "Invalid Command",
+           (status & (1u << 28)) ? "1" : "0",
+           (status & (1u << 28)) ? "Yes - Invalid command received" : "No");
+
+    printf("    %-25s %-15s %s\n", "SED Error",
+           (status & (1u << 29)) ? "1" : "0",
+           (status & (1u << 29)) ? "Yes - SED error detected" : "No");
+
+    printf("    %-25s %-15s %s\n", "Bypass Mode",
+           (status & (1u << 30)) ? "1" : "0",
+           (status & (1u << 30)) ? "Yes - Device in Bypass mode" : "No");
+
+    printf("    %-25s %-15s %s\n", "Flow Through Mode",
+           (status & (1u << 31)) ? "1" : "0",
+           (status & (1u << 31)) ? "Yes - Device in Flow Through Mode" : "No");
+}
+
+static int
+exec_read_status(int debug)
+{
+	int i, ret=0, fsize=0;
+	char *status;
+	char cmds[5][128]={
+	"STATE IDLE",
+	"STATE RESET",
+	"STATE IDLE",
+	"SIR 8 TDI 3C",
+	"SDR 32 TDI 00000000 TDO 00000000 MASK FFFFFFFF"
+	};
+
+	for (i=0; i < 5; i++) {
+		status=exec_svf_line(cmds[i]);
+		if (status==NULL) {
+			printf("Error sending line: %s\n", cmds[i]);
+			return(EXIT_FAILURE);
+		}
+	}
+	printf("FPGA LSC_READ_STATUS: %s\n", status);
+	if (debug) {
+		print_device_status_bits(status);
+	}
+	return(0);
+}
 
 /*
  * Parse a Lattice ECP5 bitstream file and convert it into a SVF stream,
@@ -3030,6 +3184,7 @@ usage(void)
 #endif
 	printf("  -T TYPE	Select TYPE of input (svf, img, bit or jed)\n");
 	printf("  -i 		identify and exit\n");
+	printf("  -I 		display READ_STATUS register and exit\n");
 	printf("  -j TARGET	Select bitstream TARGET as SRAM (default)"
 	    " or FLASH\n");
 	printf("  -f ADDR	Start writing to SPI flash at ADDR, "
@@ -4492,9 +4647,9 @@ main(int argc, char *argv[])
 	serial = NULL;
 
 #ifndef USE_PPI
-#define OPTS	"Vqtdzhij:l:T:b:p:x:p:P:a:e:f:D:rs:S:"
+#define OPTS	"Vqtdzhij:l:T:b:p:x:p:P:a:e:f:D:rIs:S:"
 #else
-#define OPTS	"Vqtdzhij:l:T:b:p:x:p:P:a:e:f:D:rs:S:c:"
+#define OPTS	"Vqtdzhij:l:T:b:p:x:p:P:a:e:f:D:rIs:S:c:"
 #endif
 	while ((c = getopt(argc, argv, OPTS)) != -1) {
 		switch (c) {
@@ -4554,6 +4709,9 @@ main(int argc, char *argv[])
 			break;
 		case 'i':
 			opt_info = 1;
+			break;
+		case 'I':
+			opt_status = 1;
 			break;
 		case 'j':
 			if (strcasecmp(optarg, "sram") == 0)
@@ -4743,8 +4901,17 @@ main(int argc, char *argv[])
 #endif /* !WIN32 */
 	}
 
-	if (opt_info) {
-		res = exec_info(argv[0], jed_target, debug);
+	if (opt_info || opt_status) {
+		if (opt_info && opt_status) {
+			res = exec_info(argv[0], jed_target, debug);
+			if (res == 0) {
+				res = exec_read_status(debug);
+			}
+		} else if (opt_info) {
+			res = exec_info(argv[0], jed_target, debug);
+		} else if (opt_status) {
+			res = exec_read_status(debug);
+		}
 	} else {
 		if (argc == 0 && terminal == 0 && txfname == NULL && reload == 0) {
 			prog(NULL,jed_target,debug);
