@@ -469,10 +469,21 @@ static struct cable_hw_map {
 		.usb_vid = 	0x0403,
 		.usb_pid =	0x6015,
 		.cable_path =	"GoelzerCM",
-		.tck =		0x20,
-		.tms =		0x40,
-		.tdi =		0x80,
-		.tdo =		0x08,
+		.tck =		0x01,
+		.tms =		0x08,
+		.tdi =		0x02,
+		.tdo =		0x04,
+		.cbus_led =	0x00
+	},
+	{
+		.cable_hw = 	CABLE_HW_USB,
+		.usb_vid = 	0x0403,
+		.usb_pid =	0x6014,
+		.cable_path =	"USB JTAG Programmer",
+		.tck =		0x01,
+		.tms =		0x08,
+		.tdi =		0x02,
+		.tdo =		0x04,
 		.cbus_led =	0x00
 	},
 	{
@@ -968,7 +979,7 @@ setup_usb(void)
 		return (res);
 	}
 	if (global_debug)
-		fprintf(stderr, "DEBUG: ftdi_set_baudrate() set to %d\n", USB_BAUDS);
+		fprintf(stderr, "DEBUG: setup_usb: ftdi_set_baudrate() set to %d\n", USB_BAUDS);
 
 	res = ftdi_write_data_set_chunksize(&fc, BUFLEN_MAX);
 	if (res < 0) {
@@ -976,7 +987,7 @@ setup_usb(void)
 		return (res);
 	}
 	if (global_debug)
-		fprintf(stderr, "DEBUG: ftdi_write_data_set_chunksize() set to %d\n", BUFLEN_MAX);
+		fprintf(stderr, "DEBUG: setup_usb: ftdi_write_data_set_chunksize() set to %d\n", BUFLEN_MAX);
 
 	/* Reducing latency to 1 ms for BITMODE_SYNCBB is crucial! */
 	res = ftdi_set_latency_timer(&fc, 1);
@@ -985,7 +996,7 @@ setup_usb(void)
 		return (res);
 	}
 	if (global_debug)
-		fprintf(stderr, "DEBUG: ftdi_set_latency_timer() set to %d\n", 1);
+		fprintf(stderr, "DEBUG: setup_usb: ftdi_set_latency_timer() set to %d\n", 1);
 
 	res = ftdi_set_bitmode(&fc, USB_TCK | USB_TMS | USB_TDI,
 	    BITMODE_BITBANG);
@@ -994,7 +1005,7 @@ setup_usb(void)
 		return (EXIT_FAILURE);
 	}
 	if (global_debug) {
-		fprintf(stderr, "DEBUG: ftdi_set_bitmode() set to 0x%02x\n", USB_TCK | USB_TMS | USB_TDI);
+		fprintf(stderr, "DEBUG: setup_usb: ftdi_set_bitmode() set to 0x%02x\n", USB_TCK | USB_TMS | USB_TDI);
 	}
 	if (global_debug)
 		fprintf(stderr, "Returning from setup_usb()\n");
@@ -1646,10 +1657,25 @@ exec_svf_tokenized(int tokc, char *tokv[])
 		}
 		if (cmd == SVF_SDR) {
 			set_state(DRPAUSE);
+			if (global_debug) {
+				printf("[DEBUG <DRPAUSE> exec_svf_tokenized with cmd==SVF_SDR] dumping all tokv's before send_dr...\n");
+				for (i = 0; i < tokc; i++) {
+					printf("[DEBUG <DRPAUSE> exec_svf_tokenized with cmd==SVF_SDR]   tokv[%d] = %s\n", i, tokv[i]);
+				}
+			}
 			res = send_dr(atoi(tokv[1]), tokv[3], tokv[5], tokv[7]);
 		} else {
 			set_state(IRPAUSE);
+			if (global_debug) {
+				printf("[DEBUG <IRPAUSE> exec_svf_tokenized with cmd==SVF_SIR] dumping all tokv's before send_ir...\n");
+				for (i = 0; i < tokc; i++) {
+					printf("[DEBUG <IRPAUSE> exec_svf_tokenized with cmd==SVF_SIR]   tokv[%d] = %s\n", i, tokv[i]);
+				}
+			}
 			res = send_ir(atoi(tokv[1]), tokv[3], tokv[5], tokv[7]);
+		}
+		if (global_debug) {
+			printf("[DEBUG exec_svf_tokenized] send_dr/ir result res = %d\n", res);
 		}
 		if (res)
 			break;
@@ -1657,6 +1683,13 @@ exec_svf_tokenized(int tokc, char *tokv[])
 			if (strlen(tokv[3]) == 8 && strlen(tokv[5]) == 8 &&
 				strcmp(tokv[7], "FFFFFFFF") == 0)
 			{
+				if (global_debug) {
+					printf("[DEBUG exec_svf_tokenized] breaking here because...\n");
+					printf("[DEBUG exec_svf_tokenized]   tokc = %d\n", tokc);
+					for (i = 0; i < tokc; i++) {
+						printf("[DEBUG exec_svf_tokenized]   tokv[%d] = %s\n", i, tokv[i]);
+					}
+				}
 				break;
 			}
 		}
@@ -2507,6 +2540,13 @@ char *exec_svf_line(char *cmdbuf)
 		printf("[d] Using following tokenized command: %s\n", cmdbuf);
 
 	/* Execute command */
+	if (global_debug) {
+		printf("[DEBUG exec_svf_line] Tokenized command: %s\n", cmdbuf);
+		printf("[DEBUG exec_svf_line] Number of tokens: %d\n", tokc);
+		for (i = 0; i < tokc; i++) {
+			printf("[DEBUG exec_svf_line] Token %d: %s\n", i, tokv[i]);
+		}
+	}
 	res = exec_svf_tokenized(tokc, tokv);
 	if (global_debug) {
 		printf("[d] exec_svf_tokenized returned %d\n", res);
@@ -3521,6 +3561,8 @@ async_set_baudrate(int speed)
 #else
 		ftdi_set_baudrate(&fc, speed);
 #endif
+		if (global_debug)
+			fprintf(stderr, "DEBUG: async_set_baudrate: set baudrate to %d\n", speed);
 	} else {
 #ifdef WIN32
 		if (GetCommState(com_port, &tty) == 0) {
